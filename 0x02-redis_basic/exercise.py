@@ -27,3 +27,26 @@ class Cache:
         self._redis.set(random_key, data)
 
         return random_key
+
+    def get(self, key: str, fn: Callable = None) -> Union[str, bytes, int, float]:
+        """ Retrieves a value from Redis storage.
+
+        Args:
+        key (str): The key of the data to retrieve.
+        fn (Callable): Callable argument used to convert the data back to the desired format.
+
+        Returns:
+        The stored data
+        """
+        data = self._redis.get(key)
+        return fn(data) if fn is not None else data
+
+    def get_str(self, key: str) -> str:
+        '''Retrieves a string value from a Redis data storage.
+        '''
+        return self.get(key, lambda x: x.decode('utf-8'))
+
+    def get_int(self, key: str) -> int:
+        '''Retrieves an integer value from a Redis data storage.
+        '''
+        return self.get(key, lambda x: int(x))
