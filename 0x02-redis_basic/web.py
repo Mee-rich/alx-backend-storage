@@ -1,38 +1,82 @@
 #!/usr/bin/env python3
-'''A module with tools for request caching and tracking.
-'''
-import redis
+
 import requests
+import redis
 from functools import wraps
-from typing import Callable
+from typing import Callable, Optional
 
-
+# Initialize Redis client
 redis_store = redis.Redis()
-'''The module-level Redis instance.
-'''
+
+def cache_page(expiration: int = 10):
+    """
+    Decorator to cache the output of a fetched page for a certain period.
+
+    Args:
+        expiration (int): Expiration time for the cached result in seconds.
+    """
+    def decorator(method: Callable) -> Callable:
+        @wraps(method)
+        def invoker(url: str) -> str:
+            """
+            Wrapper function that caches the output of the URL fetching method.
+            """
+            # Generate Redis keys for count and result
+            count_key = f'count:{url}'
+            result_key = f'result:{url}'
+
+            # Increment the access count for this URL
+            redis_store.incr(count_key)
+
+            # Check if the result is already cached
+            cached_result = redis_store.get(result_key)
+            if cached_result:
+                print(f"Cache hit for {url}")
+                return cached_result.decode('utf-8')
+
+            # Cache miss: Fetch the page content
+            print(f"Cache miss for {url}. Fetching content...")
+            try:
+                result = method(url)
+            except requests.RequestException as e:
+                print(f"Error fetching {url}: {e}")
+                return f"Failed to retrieve {url}: {e}"
+
+            # Cache the result with expiration time
+            redis_store.setex(result_key, expiration, result)
+            return result
+
+        return invoker
+    return decorator
 
 
-def data_cacher(method: Callable) -> Callable:
-    '''Caches the output of fetched data.
-    '''
-    @wraps(method)
-    def invoker(url) -> str:
-        '''The wrapper function for caching the output.
-        '''
-        redis_store.incr(f'count:{url}')
-        result = redis_store.get(f'result:{url}')
-        if result:
-            return result.decode('utf-8')
-        result = method(url)
-        redis_store.set(f'count:{url}', 0)
-        redis_store.setex(f'result:{url}', 10, result)
-        return result
-    return invoker
-
-
-@data_cacher
+@cache_page(expiration=10)
 def get_page(url: str) -> str:
-    '''Returns the content of a URL after caching the request's response,
-    and tracking the request.
-    '''
-    return requests.get(url).text
+    """
+    Fetches the content of a URL.
+
+    Args:
+        url (str): The URL to fetch.
+
+    Returns:
+        str: The HTML content of the URL.
+    """
+    response = requests.get(url)
+    response.raise_for_status()  # Raise an error for bad HTTP responses (4xx, 5xx)
+    return response.text
+
+
+# Example usage
+if __name__ == "__main__":
+    url = "http://slowwly.robertomurray.co.uk/"
+
+    # First call - cache miss, fetches from the URL
+    print(get_page(url))
+
+    # Second call - within 10 seconds, should be a cache hit
+    print(get_page(url))
+
+    # Check how many times the URL has been accessed
+    access_count = redis_store.get(f'count:{url}')
+    print(f"URL {url} accessed {int(access_count)} times.")
+
